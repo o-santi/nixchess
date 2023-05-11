@@ -1,8 +1,8 @@
-use nixchess::{ChessGame, InsertionError, PGNParser};
+use nixchess::{ParsedChessGame, InsertionError, PGNParser, games_from_player, movements_from_game, Game, print_game, analysis};
 use pgn_reader::BufferedReader;
-use sqlx::{PgConnection, Connection};
+use sqlx::{postgres::PgPoolOptions, Pool, Postgres};
 
-fn parse_lichess_pgn(filepath: &str) -> Result<Vec<ChessGame>, InsertionError> {
+fn parse_lichess_pgn(filepath: &str) -> Result<Vec<ParsedChessGame>, InsertionError> {
   let game = std::fs::read_to_string(filepath).expect("Could not find file");
   let mut reader = BufferedReader::new_cursor(&game);
   let mut visitor = PGNParser::new();
@@ -16,15 +16,30 @@ fn parse_lichess_pgn(filepath: &str) -> Result<Vec<ChessGame>, InsertionError> {
   Ok(ret)
 }
 
+async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result<(), InsertionError> {
+  println!("Parsing the games from file.");
+  let games = parse_lichess_pgn(file)?;
+  println!("Parsed!");
+  let mut tasks = Vec::new();
+  for game in games {
+    let task = tokio::spawn(game.insert(pool.acquire().await.expect("Could not acquire handle")));
+    tasks.push(task)
+  }
+  for task in tasks {
+    task.await.expect("Could not join threads")?;
+  }
+  Ok(())
+}
+
 #[tokio::main]
 async fn main() {
   dotenv::dotenv().ok();
   let db_url = std::env::var("DATABASE_URL").expect("Unable to read DATABASE_URL env var");
-  let mut db = PgConnection::connect(&db_url).await.expect("Could not connect to the database");
-  let games = parse_lichess_pgn("./lichess_db_standard_rated_2013-01.pgn").unwrap();
-  for game in games {
-    let (white, black, date, time) = (game.white.clone(), game.black.clone(), game.date, game.time);
-    game.insert(&mut db).await.expect("Could not insert game");
-    println!("{white} vs {black} ({date} {time})")
-  }
+  println!("Connecting to database.");
+  let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await.expect("Could not connect to the database");
+  println!("Connected!");
+  //insert_games_from_file(&pool, "./lichess_db_standard_rated_2013-01.pgn").await.unwrap();
+  let mut conn = pool.acquire().await.unwrap();
+  let games = games_from_player(&mut conn, "Kozakmamay007").await.unwrap();
+  analysis(pool, games.get(0).unwrap().clone()).await.unwrap();
 }
