@@ -5,7 +5,7 @@ use cursive::theme::{ColorStyle, Color, ColorType, BaseColor};
 use cursive::view::Resizable;
 use pgn_reader::{Square, Role, Color as PieceColor, San};
 use shakmaty::{Board, Piece, Chess, Position};
-use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView};
+use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, ScrollView};
 use cursive::traits::Nameable;
 use cursive::{Cursive, View};
 use sqlx::Postgres;
@@ -98,7 +98,7 @@ pub fn show_game(siv: &mut Cursive, board: Rc<RefCell<BoardState>>) {
 }
 
 pub fn draw_board(board_state: &BoardState) -> impl View {
-  let mut row_stack = LinearLayout::vertical()
+  let mut board_column = LinearLayout::vertical()
     .child(TextView::new(format!("{} [W] vs {} [B] at {} ({})",
                                  board_state.game.white, board_state.game.black, board_state.game.event, board_state.game.datetime)).max_width(40))
     .child(DummyView);
@@ -121,10 +121,26 @@ pub fn draw_board(board_state: &BoardState) -> impl View {
       row_layout.add_child(cell);
     }
     row_layout.add_child(DummyView);
-    row_stack.add_child(row_layout);
+    board_column.add_child(row_layout);
   }
-  row_stack.add_child(TextView::new("   A  B  C  D  E  F  G  H"));
-  row_stack
+  board_column.add_child(TextView::new("   A  B  C  D  E  F  G  H"));
+
+  let mut white_column = LinearLayout::vertical();
+  let mut black_column = LinearLayout::vertical();
+  let seen     = ColorStyle::new(Color::Light(BaseColor::White), Color::Rgb(135, 135, 180));
+  let not_seen = ColorStyle::new(Color::TerminalDefault, Color::Rgb(45, 45, 60));
+  for movement in board_state.moves.iter() {
+    let style = if movement.game_round >= board_state.curr_move_idx as i32 { not_seen } else { seen };
+    if movement.game_round % 2 == 0 {
+      let row = TextView::new(format!("{}. {} ", movement.game_round / 2, movement.san_plus.0)).style(style);
+      white_column.add_child(row);
+    } else {
+      let row = TextView::new(format!(" {}", movement.san_plus.0)).style(style);
+      black_column.add_child(row);
+    }
+  }
+  let movement_colum = LinearLayout::horizontal().child(white_column).child(black_column);
+  LinearLayout::horizontal().child(board_column).child(movement_colum)
 }
 
 pub fn maybe_piece_to_unicode(piece: Option<Piece>) -> char {
