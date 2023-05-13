@@ -1,16 +1,42 @@
 use sqlx::postgres::PgPoolOptions;
-//use nixchess::queries::{analysis, games_from_player};
-use nixchess::ui::cli_entrypoint;
+use nixchess::{ui::cli_entrypoint, db::insert_games_from_file};
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about=None)]
+/// A chess game visualizer and database builder.
+struct NixChessArgs {
+  #[clap(subcommand)]
+  command: Command,
+  /// Games database to connect to. If none, uses the `DATABASE_URL` environment variable.
+  #[clap(short, long)]
+  db_url: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+  /// Run chess game vizualizer 
+  View,
+  /// Fill the database from a pgn file
+  Fill {
+    pgn_file: String
+  }
+}
 
 fn main() {
-  // dotenv::dotenv().ok();
-  // let db_url = std::env::var("DATABASE_URL").expect("Unable to read DATABASE_URL env var");
-  // println!("Connecting to database.");
-  // let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await.expect("Could not connect to the database");
-  // println!("Connected!");
-  // //insert_games_from_file(&pool, "./lichess_db_standard_rated_2013-01.pgn").await.unwrap();
-  // let mut conn = pool.acquire().await.unwrap();
-  // let games = games_from_player(&mut conn, "Kozakmamay007").await.unwrap();
-  // analysis(pool, games.get(0).unwrap().clone()).await.unwrap();
-  cli_entrypoint();
+  let args = NixChessArgs::parse();
+  let db_url = args.db_url.unwrap_or_else(|| {
+    dotenv::dotenv().ok();
+    std::env::var("DATABASE_URL").expect("No database url in .env. Please provide one using -db url.")
+  });
+  match args.command {
+    Command::View => cli_entrypoint(db_url),
+    Command::Fill { pgn_file } => {
+      let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+      runtime.block_on(async {
+        let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await.expect("Could not connect to the database");
+        insert_games_from_file(&pool, &pgn_file).await.unwrap();
+      })
+    },
+  };
 }

@@ -229,7 +229,7 @@ fn parse_lichess_pgn(filepath: &str) -> Result<Vec<ParsedChessGame>, InsertionEr
   Ok(ret)
 }
 
-async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result<(), InsertionError> {
+pub async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result<(), InsertionError> {
   println!("Parsing the games from file.");
   let games = parse_lichess_pgn(file)?;
   println!("Parsed!");
@@ -239,7 +239,7 @@ async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result<(),
     tasks.push(task)
   }
   for task in tasks {
-    task.await.expect("Could not join threads")?;
+    let _ = task.await.map_err(|err| eprintln!("{}", err));
   }
   Ok(())
 }

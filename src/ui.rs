@@ -5,13 +5,12 @@ use cursive::theme::{ColorStyle, Color, ColorType, BaseColor};
 use cursive::view::Resizable;
 use pgn_reader::{Square, Role, Color as PieceColor, San};
 use shakmaty::{Board, Piece, Chess, Position};
-use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, ScrollView};
+use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView};
 use cursive::traits::Nameable;
 use cursive::{Cursive, View};
 use sqlx::Postgres;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
-use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -42,19 +41,20 @@ impl BoardState {
   }
 }
 
-pub fn fetch_game(game_id: i32) -> Result<BoardState, InsertionError> {
-  let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-  dotenv::dotenv().ok();
-  let db_url = std::env::var("DATABASE_URL").expect("Unable to read DATABASE_URL env var");
-  let pool = runtime.block_on(PgPoolOptions::new().max_connections(20).connect(&db_url))?;
-  let mut conn = runtime.block_on(pool.acquire())?;
-  let game = runtime.block_on(game_from_id(&mut conn, game_id))?;
-  let board_state = runtime.block_on(BoardState::build(&mut conn, game))?;
-  Ok(board_state)
+pub fn fetch_game(game_id: i32, db_url: String) -> Result<BoardState, InsertionError> {
+  let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+  runtime.block_on(async {
+    let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await?;
+    let mut conn = pool.acquire().await?;
+    let game = game_from_id(&mut conn, game_id).await?;
+    let board_state = BoardState::build(&mut conn, game).await?;
+    Ok::<BoardState, InsertionError>(board_state)
+  })
 }
 
-pub fn cli_entrypoint() {
+pub fn cli_entrypoint(db_url: String) {
   let mut siv = cursive::default();
+  siv.set_user_data(db_url);
   siv.add_layer(
     Dialog::around(
       EditView::new()
@@ -63,8 +63,9 @@ pub fn cli_entrypoint() {
       .title("Enter game id:")
       .button("Ok", |s| {
         let game_id = s.call_on_name("game_id", |v: &mut EditView| v.get_content()).unwrap();
+        let db_url = s.take_user_data::<String>().unwrap();
         if let Ok(id) = game_id.parse::<i32>() {
-          if let Ok(board_state) = fetch_game(id) {
+          if let Ok(board_state) = fetch_game(id, db_url) {
             show_game(s, Rc::new(RefCell::new(board_state)));
           }
         }
