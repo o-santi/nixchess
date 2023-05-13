@@ -1,4 +1,4 @@
-* Nixchess (Name TDB)
+# Nixchess (Name TDB)
 
 A chess game terminal visualizer.
 
