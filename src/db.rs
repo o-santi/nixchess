@@ -1,5 +1,5 @@
 use shakmaty::fen::Fen;
-use shakmaty::{Chess, Position};
+use shakmaty::{Chess, Position, zobrist::{ZobristHash, Zobrist64}};
 use pgn_reader::{RawHeader, SanPlus, Visitor, BufferedReader};
 use sqlx::types::chrono::{NaiveDate, NaiveTime, NaiveDateTime};
 use sqlx::{Error as DbErr, PgConnection, Acquire, Pool, Postgres};
@@ -74,7 +74,7 @@ impl sqlx::Type<sqlx::Postgres> for SAN {
 
 #[derive(Debug, Clone)]
 pub struct Move {
-  pub board: String, // board id
+  pub board: Zobrist64, // board id
   pub san_plus: SAN,
   pub game_id: GameId,
   pub game_round: i32
@@ -181,35 +181,18 @@ impl ParsedChessGame {
         .to_move(&board)
         .map_err(|_| InsertionError::IlegalMove(movement.0.clone()))?
         .clone();
-      let before_board = board.clone();
-      board = board
-        .play(&move_to_play)
-        .map_err(|_| InsertionError::IlegalMove(movement.0.clone()))?;
-      let fen = Fen::from_position(before_board, shakmaty::EnPassantMode::Always);
-      let fen_str = format!("{fen}");
-      let maybe_fen_id = sqlx::query!(
-        r#"SELECT id from Board WHERE fen = ($1);"#, fen_str
-      ).fetch_optional(&mut tx)
-        .await?;
-      let fen_id = match maybe_fen_id {
-        Some(row) => row.id,
-        None => {
-          let fetch = sqlx::query!(
-            r#"INSERT INTO Board (fen) VALUES ($1) RETURNING ID"#,
-            fen_str
-          ).fetch_one(&mut tx)
-            .await?;
-          fetch.id
-        }
-      };
+      let board_hash = board.zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal).0;
       sqlx::query!(
-        r#"INSERT INTO Move (game_round, game_id, san_plus, board) VALUES ($1, $2, $3, $4);"#,
+        r#"INSERT INTO Move (game_round, game_id, san_plus, board_hash) VALUES ($1, $2, $3, $4);"#,
         index as i32 + 1,
         game_id.id,
         format!("{}", movement.0),
-        fen_id
+        board_hash as i64
       ).execute(&mut tx)
         .await?;
+      board = board
+        .play(&move_to_play)
+        .map_err(|_| InsertionError::IlegalMove(movement.0.clone()))?;
     }
     tx.commit().await?;
     Ok(())

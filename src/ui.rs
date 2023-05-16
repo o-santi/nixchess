@@ -134,9 +134,9 @@ pub fn draw_related_games_column(board_state: &BoardState) -> impl View {
   let mut games_column = LinearLayout::vertical();
   for (played_move, game) in related_board.iter().take(10) {
     let mvmt = TextView::new(if played_move.game_round % 2 == 1 {
-      format!("{} . {}", played_move.game_round, played_move.san_plus.0)
+      format!("{} {}", (played_move.game_round - 1) / 2, played_move.san_plus.0)
     } else {
-      format!("{} ... {}", played_move.game_round, played_move.san_plus.0)
+      format!("{} ... {}", played_move.game_round / 2, played_move.san_plus.0)
     });
     let game = TextView::new(format!("{} ({}) vs {} ({})", game.white, game.white_elo.unwrap(), game.black, game.black_elo.unwrap()));
     movement_column.add_child(mvmt);
@@ -153,7 +153,7 @@ pub fn draw_movement_column(board_state: &BoardState) -> impl View {
   let not_seen = ColorStyle::secondary();
   for movement in board_state.moves.iter() {
     let style = if movement.game_round >= board_state.curr_move_idx as i32 { not_seen } else { seen };
-    if movement.game_round % 2 == 0 {
+    if movement.game_round % 2 == 1 {
       let row = TextView::new(format!("{}. {} ", movement.game_round / 2, movement.san_plus.0)).style(style);
       white_column.add_child(row);
     } else {
