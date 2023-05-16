@@ -5,7 +5,6 @@ use sqlx::types::chrono::{NaiveDate, NaiveTime, NaiveDateTime};
 use sqlx::{Error as DbErr, PgConnection, Acquire, Pool, Postgres};
 use sqlx::pool::PoolConnection;
 
-
 #[derive(Debug, Clone)]
 pub struct Game {
   pub id: GameId,
@@ -13,6 +12,8 @@ pub struct Game {
   pub datetime: NaiveDateTime,
   pub white: String,
   pub black: String,
+  pub white_elo: Option<i32>,
+  pub black_elo: Option<i32>
 }
 
 
@@ -37,8 +38,8 @@ pub struct PGNParser {
   time: Option<NaiveTime>,
   white: Option<String>,
   black: Option<String>,
-  white_elo: Option<usize>,
-  black_elo: Option<usize>,
+  white_elo: Option<i32>,
+  black_elo: Option<i32>,
   moves: Vec<SAN>,
 }
 
@@ -49,6 +50,8 @@ pub struct ParsedChessGame {
   pub time: NaiveTime,
   pub white: String,
   pub black: String,
+  pub white_elo: Option<i32>,
+  pub black_elo: Option<i32>,
   moves: Vec<SAN>,
 }
 
@@ -101,23 +104,23 @@ impl Visitor for PGNParser {
     match key {
       b"Event" => self.event = Some(val),
       b"UTCDate" => {
-        let date = NaiveDate::parse_from_str(&val, "%Y.%m.%d").expect("could not parse date string");
+        let date = NaiveDate::parse_from_str(&val, "%Y.%m.%d").expect("Invalid data: could not parse date string");
         self.date = Some(date)
       }
       b"UTCTime" => {
-        let time = NaiveTime::parse_from_str(&val, "%H:%M:%S").expect("could not parse time string");
+        let time = NaiveTime::parse_from_str(&val, "%H:%M:%S").expect("Invalid data: could not parse time string");
         self.time = Some(time)
       }
       b"White" => self.white = Some(val),
       b"Black" => self.black = Some(val),
-      // b"WhiteElo" => {
-      //   let elo = val.parse::<usize>().unwrap();
-      //   self.white_elo = Some(elo);
-      // }
-      // b"BlackElo" => {
-      //   let elo = val.parse::<usize>().unwrap();
-      //   self.black_elo = Some(elo);
-      // }
+      b"WhiteElo" => {
+        let elo = val.parse::<i32>().ok();
+        self.white_elo = elo;
+      }
+      b"BlackElo" => {
+        let elo = val.parse::<i32>().ok();
+        self.black_elo = elo;
+      }
       _ => {}
     }
   }
@@ -134,6 +137,8 @@ impl Visitor for PGNParser {
       time: game.time.expect("Time missing"),
       white: game.white.expect("White player missing"),
       black: game.black.expect("Black player missing"),
+      white_elo: game.white_elo,
+      black_elo: game.black_elo,
       moves: game.moves,
     }
   }
@@ -157,11 +162,13 @@ impl ParsedChessGame {
     let datetime: NaiveDateTime = NaiveDateTime::new(self.date, self.time);
     let game_id = sqlx::query_as!(
       GameId,
-      r#"INSERT INTO Game (white, black, event, datetime) VALUES ($1, $2, $3, $4) RETURNING id;"#,
+      r#"INSERT INTO Game (white, black, event, datetime, white_elo, black_elo) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;"#,
       self.white,
       self.black,
       self.event,
-      datetime
+      datetime,
+      self.white_elo,
+      self.black_elo
     )
       .fetch_one(&mut tx)
       .await?
@@ -197,7 +204,7 @@ impl ParsedChessGame {
       };
       sqlx::query!(
         r#"INSERT INTO Move (game_round, game_id, san_plus, board) VALUES ($1, $2, $3, $4);"#,
-        index as i32,
+        index as i32 + 1,
         game_id.id,
         format!("{}", movement.0),
         fen_id
@@ -234,7 +241,7 @@ pub async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result
   let games = parse_lichess_pgn(file)?;
   println!("Parsed!");
   let mut tasks = Vec::new();
-  for game in games {
+  for game in kdam::tqdm!(games.into_iter()) {
     let task = tokio::spawn(game.insert(pool.acquire().await.expect("Could not acquire handle")));
     tasks.push(task)
   }

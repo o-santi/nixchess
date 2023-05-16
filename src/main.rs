@@ -32,9 +32,9 @@ fn main() {
   match args.command {
     Command::View => cli_entrypoint(db_url),
     Command::Fill { pgn_file } => {
-      let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+      let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
       runtime.block_on(async {
-        let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await.expect("Could not connect to the database");
+        let pool = PgPoolOptions::new().max_connections(50).connect(&db_url).await.expect("Could not connect to the database");
         insert_games_from_file(&pool, &pgn_file).await.unwrap();
       })
     },

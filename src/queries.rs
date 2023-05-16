@@ -1,49 +1,46 @@
 use crate::db::{InsertionError, Game, Move, GameId, SAN};
-use crate::ui::print_board;
-use sqlx::pool::{Pool, PoolConnection};
+use sqlx::pool::PoolConnection;
 use shakmaty::san::SanPlus;
-use shakmaty::Chess;
-use shakmaty::Position;
 use sqlx::Postgres;
 
 
-pub async fn analysis(db: Pool<sqlx::Postgres>, game: Game) -> Result<(), InsertionError> {
-  let mut conn = db.acquire().await.expect("Could not acquire pool connection");
-  let moves = movements_from_game(&mut conn, game.id.clone()).await?;
+// pub async fn analysis(db: Pool<sqlx::Postgres>, game: Game) -> Result<(), InsertionError> {
+//   let mut conn = db.acquire().await.expect("Could not acquire pool connection");
+//   let moves = movements_from_game(&mut conn, game.id.clone()).await?;
 
-  println!("Tournament: {}", game.event);
-  println!("{} vs {}", game.white, game.black);
-  println!("");
+//   println!("Tournament: {}", game.event);
+//   println!("{} vs {}", game.white, game.black);
+//   println!("");
 
-  let mut board = Chess::default();
+//   let mut board = Chess::default();
   
-  for movement in moves {
-    if movement.game_round % 2 == 0 {
-      println!("{} . {}", movement.game_round / 2, movement.san_plus.0);
-    } else {
-      println!("... {}", movement.san_plus.0);
-    }
-    println!("");
+//   for movement in moves {
+//     if movement.game_round % 2 == 0 {
+//       println!("{} . {}", movement.game_round / 2, movement.san_plus.0);
+//     } else {
+//       println!("... {}", movement.san_plus.0);
+//     }
+//     println!("");
 
-    board.play_unchecked(&movement.san_plus.0.san.to_move(&board).expect("valid move"));
-    print_board(board.board(), movement.clone());
+//     board.play_unchecked(&movement.san_plus.0.san.to_move(&board).expect("valid move"));
+//     print_board(board.board(), movement.clone());
     
-    let moves_from_position = movements_from_position(&mut conn, movement.board).await?;
-    if moves_from_position.len() > 1 {
-      println!("{} other games reach this position.", moves_from_position.len() - 1);
-    }
-    for possible_move in moves_from_position.into_iter().filter(|x| x.game_id != game.id).take(5) {
-      let played_in_game = game_from_move(&mut conn, possible_move.clone()).await?;
-      println!("---- {} played in {} vs {} ({})", possible_move.san_plus.0, played_in_game.white, played_in_game.black, played_in_game.datetime);
-    }
-    println!();
-  }
-  Ok(())
-}
+//     let moves_from_position = movements_from_position(&mut conn, movement.board).await?;
+//     if moves_from_position.len() > 1 {
+//       println!("{} other games reach this position.", moves_from_position.len() - 1);
+//     }
+//     for possible_move in moves_from_position.into_iter().filter(|x| x.game_id != game.id).take(5) {
+//       let played_in_game = game_from_move(&mut conn, possible_move.clone()).await?;
+//       println!("---- {} played in {} vs {} ({})", possible_move.san_plus.0, played_in_game.white, played_in_game.black, played_in_game.datetime);
+//     }
+//     println!();
+//   }
+//   Ok(())
+// }
 
 pub async fn games_from_player(db: &mut PoolConnection<Postgres>, player: &str) -> Result<Vec<Game>, InsertionError> {
   let games = sqlx::query!(
-    r#"SELECT id, event, datetime, black, white FROM Game WHERE black = ($1) OR white = ($1)"#,
+    r#"SELECT id, event, datetime, black, white, white_elo, black_elo FROM Game WHERE black = ($1) OR white = ($1)"#,
     player
   ).fetch_all(db)
     .await?
@@ -54,6 +51,8 @@ pub async fn games_from_player(db: &mut PoolConnection<Postgres>, player: &str) 
       datetime: row.datetime,
       white: row.white,
       black: row.black,
+      white_elo: row.white_elo,
+      black_elo: row.black_elo,
     })
     .collect();
   Ok(games)
@@ -92,7 +91,7 @@ pub async fn movements_from_position(db: &mut PoolConnection<Postgres>, board: S
 
 pub async fn game_from_move(db: &mut PoolConnection<Postgres>, movement: Move) -> Result<Game, InsertionError> {
   let row = sqlx::query!(
-    r#"SELECT id, white, black, event, datetime from Game INNER JOIN move ON id = game_id WHERE id = ($1)"#,
+    r#"SELECT id, white, black, event, datetime, white_elo, black_elo from Game INNER JOIN move ON id = game_id WHERE id = ($1)"#,
     movement.game_id.id
   )
     .fetch_one(db)
@@ -102,14 +101,16 @@ pub async fn game_from_move(db: &mut PoolConnection<Postgres>, movement: Move) -
     event: row.event,
     datetime: row.datetime,
     white: row.white,
-    black: row.black,    
+    black: row.black,
+    white_elo: row.white_elo,
+    black_elo: row.black_elo,
   };
   Ok(game)
 }
 
 pub async fn game_from_id(db: &mut PoolConnection<Postgres>, game_id: i32) -> Result<Game, InsertionError> {
   let row = sqlx::query!(
-    r#"SELECT id, white, black, event, datetime from Game WHERE id = ($1)"#,
+    r#"SELECT id, white, black, event, datetime, white_elo, black_elo from Game WHERE id = ($1)"#,
     game_id
   )
     .fetch_one(db)
@@ -119,7 +120,9 @@ pub async fn game_from_id(db: &mut PoolConnection<Postgres>, game_id: i32) -> Re
     event: row.event,
     datetime: row.datetime,
     white: row.white,
-    black: row.black,    
+    black: row.black,
+    white_elo: row.white_elo,
+    black_elo: row.black_elo 
   };
   Ok(game)
 }
