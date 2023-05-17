@@ -3,39 +3,7 @@ use sqlx::pool::PoolConnection;
 use shakmaty::{san::SanPlus, zobrist::Zobrist64};
 use sqlx::Postgres;
 
-// pub async fn analysis(db: Pool<sqlx::Postgres>, game: Game) -> Result<(), InsertionError> {
-//   let mut conn = db.acquire().await.expect("Could not acquire pool connection");
-//   let moves = movements_from_game(&mut conn, game.id.clone()).await?;
 
-//   println!("Tournament: {}", game.event);
-//   println!("{} vs {}", game.white, game.black);
-//   println!("");
-
-//   let mut board = Chess::default();
-  
-//   for movement in moves {
-//     if movement.game_round % 2 == 0 {
-//       println!("{} . {}", movement.game_round / 2, movement.san_plus.0);
-//     } else {
-//       println!("... {}", movement.san_plus.0);
-//     }
-//     println!("");
-
-//     board.play_unchecked(&movement.san_plus.0.san.to_move(&board).expect("valid move"));
-//     print_board(board.board(), movement.clone());
-    
-//     let moves_from_position = movements_from_position(&mut conn, movement.board).await?;
-//     if moves_from_position.len() > 1 {
-//       println!("{} other games reach this position.", moves_from_position.len() - 1);
-//     }
-//     for possible_move in moves_from_position.into_iter().filter(|x| x.game_id != game.id).take(5) {
-//       let played_in_game = game_from_move(&mut conn, possible_move.clone()).await?;
-//       println!("---- {} played in {} vs {} ({})", possible_move.san_plus.0, played_in_game.white, played_in_game.black, played_in_game.datetime);
-//     }
-//     println!();
-//   }
-//   Ok(())
-// }
 
 pub async fn games_from_player(db: &mut PoolConnection<Postgres>, player: &str) -> Result<Vec<Game>, InsertionError> {
   let games = sqlx::query!(
@@ -73,17 +41,28 @@ pub async fn movements_from_game(db: &mut PoolConnection<Postgres>, game_id: Gam
   Ok(moves)
 }
 
-pub async fn movements_from_position(db: &mut PoolConnection<Postgres>, board_hash: Zobrist64) -> Result<Vec<Move>, InsertionError> {
+pub async fn movement_and_games_from_position(db: &mut PoolConnection<Postgres>, board_hash: Zobrist64) -> Result<Vec<(Move, Game)>, InsertionError> {
   let row = sqlx::query!(
-    r#"SELECT game_round, game_id, san_plus, board_hash FROM Move WHERE board_hash = ($1)"#,
+    r#"SELECT game_round, game_id, san_plus, board_hash, white, black, event, datetime, white_elo, black_elo FROM (Move INNER JOIN Game ON game_id = id) WHERE board_hash = ($1)"#,
     board_hash.0 as i64
   ).fetch_all(db)
     .await?;
-  let moves = row.into_iter().map(|row| Move {
-    board: Zobrist64(row.board_hash as u64),
-    san_plus: SAN(SanPlus::from_ascii(row.san_plus.as_bytes()).unwrap()),
-    game_id: GameId { id: row.game_id },
-    game_round: row.game_round,
+  let moves = row.into_iter().map(|row| {
+    let game_id = GameId { id: row.game_id };
+    (Move {
+      board: Zobrist64(row.board_hash as u64),
+      san_plus: SAN(SanPlus::from_ascii(row.san_plus.as_bytes()).unwrap()),
+      game_id: game_id.clone(),
+      game_round: row.game_round,
+    }, Game {
+      id: game_id,
+      event: row.event,
+      datetime: row.datetime,
+      white: row.white,
+      black: row.black,
+      white_elo: row.white_elo,
+      black_elo: row.black_elo,
+    })
   }).collect();
   Ok(moves)
 }

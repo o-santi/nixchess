@@ -1,4 +1,3 @@
-use shakmaty::fen::Fen;
 use shakmaty::{Chess, Position, zobrist::{ZobristHash, Zobrist64}};
 use pgn_reader::{RawHeader, SanPlus, Visitor, BufferedReader};
 use sqlx::types::chrono::{NaiveDate, NaiveTime, NaiveDateTime};
@@ -184,7 +183,7 @@ impl ParsedChessGame {
       let board_hash = board.zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal).0;
       sqlx::query!(
         r#"INSERT INTO Move (game_round, game_id, san_plus, board_hash) VALUES ($1, $2, $3, $4);"#,
-        index as i32 + 1,
+        (index + 1) as i32,
         game_id.id,
         format!("{}", movement.0),
         board_hash as i64

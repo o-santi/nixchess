@@ -1,13 +1,14 @@
 use crate::db::{Move, Game, InsertionError};
-use crate::queries::{game_from_id, movements_from_game, movements_from_position};
+use crate::queries::{game_from_id, movements_from_game, movement_and_games_from_position};
 use cursive::event::{Event, Key};
-use cursive::theme::{ColorStyle, Color, ColorType, BaseColor};
-use cursive::view::Resizable;
+use cursive::theme::{ColorStyle, Color, BaseColor};
+use cursive::view::{Resizable, ScrollStrategy};
+use log::{info, trace};
 use pgn_reader::{Square, Role, Color as PieceColor};
 use shakmaty::{Board, Piece, Chess, Position};
 use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, Panel, ScrollView, ProgressBar};
 use cursive::traits::Nameable;
-use cursive::{Cursive, View};
+use cursive::{Cursive, CursiveExt, View};
 use sqlx::Postgres;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::PgPoolOptions;
@@ -18,29 +19,31 @@ use std::rc::Rc;
 pub struct BoardState {
   game: Game,
   moves: Vec<Move>,
-  suggestions: Vec<Vec<(Move, Game)>>,
+  related_games: Vec<Vec<(Move, Game)>>,
   curr_move_idx: usize
 }
 
 impl BoardState {
   async fn build(conn: &mut PoolConnection<Postgres>, game: Game) -> Result<Self, InsertionError> {
+    info!("fetching moves");
     let board_moves = movements_from_game(conn, game.id.clone()).await?;
+    info!("moves fetched");
     let mut moves = Vec::with_capacity(board_moves.len());
-    let mut suggestions = Vec::with_capacity(board_moves.len());
+    let mut related_games = Vec::with_capacity(board_moves.len());
     for movement in board_moves.into_iter() {
-      let played_here: Vec<Move> = movements_from_position(conn, movement.board.clone()).await?.into_iter().filter(|x| x.game_id != game.id).collect();
-      let mut related_moves = Vec::new();
-      for played_move in played_here {
-        let game = game_from_id(conn, played_move.game_id.id).await?;
-        related_moves.push((played_move, game));
-      }
-      moves.push(movement);
-      suggestions.push(related_moves);
+      info!("fetching related games {}", movement.game_round);
+      moves.push(movement.clone());
+      let related_game = if movement.game_round > 4 {
+        movement_and_games_from_position(conn, movement.board).await?.into_iter().filter(|(x,_)| x.game_id != game.id).collect()
+      } else {
+        Vec::new()
+      };
+      related_games.push(related_game)
     }
     Ok(BoardState {
       game,
       moves,
-      suggestions,
+      related_games,
       curr_move_idx: 0
     })
   }
@@ -53,21 +56,37 @@ impl BoardState {
     }
     chess.board().clone()
   }
+
+  fn curr_square(&self) -> Option<Square> {
+    let mut chess = Chess::default();
+    for movement in self.moves.iter().take(self.curr_move_idx) {
+      let mov = movement.san_plus.0.san.to_move(&chess).expect("invalid move in database");
+      chess.play_unchecked(&mov);
+    }
+    self.moves
+      .get(self.curr_move_idx - 1)
+      .map(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").to())
+  }
 }
 
 pub fn fetch_game(game_id: i32, db_url: String) -> Result<BoardState, InsertionError> {
-  let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
+  let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
   runtime.block_on(async {
     let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await?;
+    info!("Connected to database");
     let mut conn = pool.acquire().await?;
+    info!("Connection acquired");
     let game = game_from_id(&mut conn, game_id).await?;
+    info!("Game fetched");
     let board_state = BoardState::build(&mut conn, game).await?;
+    info!("board_state built");
     Ok::<BoardState, InsertionError>(board_state)
   })
 }
 
 pub fn cli_entrypoint(db_url: String) {
   let mut siv = cursive::default();
+  siv.set_window_title("Nixchess");
   siv.set_user_data(db_url);
   siv.add_layer(
     Dialog::around(
@@ -101,11 +120,11 @@ pub fn cli_entrypoint(db_url: String) {
       }
         
       ));
-  siv.run();
+  siv.run_crossterm().expect("Could not run on crossterm backend");
 }
 
 pub fn show_game(siv: &mut Cursive, board: Rc<RefCell<BoardState>>) {
-  let board_view = draw_board(&board.borrow_mut());
+  let board_view = draw_board_state(&board.borrow_mut());
   siv.add_layer(board_view);
   let board_right = board.clone();
   let board_left = board;
@@ -115,7 +134,7 @@ pub fn show_game(siv: &mut Cursive, board: Rc<RefCell<BoardState>>) {
     if board.curr_move_idx < board.moves.len() {
       board.curr_move_idx += 1;
     }
-    siv.add_layer(draw_board(&board));
+    siv.add_layer(draw_board_state(&board));
   });
   
   siv.add_global_callback(Event::Key(Key::Left), move |siv| {
@@ -124,57 +143,63 @@ pub fn show_game(siv: &mut Cursive, board: Rc<RefCell<BoardState>>) {
     if board.curr_move_idx > 0 {
       board.curr_move_idx -= 1;
     }
-    siv.add_layer(draw_board(&board));
+    siv.add_layer(draw_board_state(&board));
   });
 }
 
 pub fn draw_related_games_column(board_state: &BoardState) -> impl View {
-  let related_board = board_state.suggestions.get(board_state.curr_move_idx).unwrap();
-  let mut movement_column = LinearLayout::vertical();
-  let mut games_column = LinearLayout::vertical();
-  for (played_move, game) in related_board.iter().take(10) {
+  let related_board = board_state.related_games.get(board_state.curr_move_idx).unwrap();
+  let mut lines = LinearLayout::vertical();
+  for (played_move, game) in related_board.iter().take(12) {
     let mvmt = TextView::new(if played_move.game_round % 2 == 1 {
-      format!("{} {}", (played_move.game_round - 1) / 2, played_move.san_plus.0)
+      format!("{} {}", (played_move.game_round + 1) / 2, played_move.san_plus.0)
     } else {
       format!("{} ... {}", played_move.game_round / 2, played_move.san_plus.0)
     });
     let game = TextView::new(format!("{} ({}) vs {} ({})", game.white, game.white_elo.unwrap(), game.black, game.black_elo.unwrap()));
-    movement_column.add_child(mvmt);
-    games_column.add_child(game);
+    let layout = LinearLayout::horizontal().child(mvmt).child(DummyView).child(game);
+    lines.add_child(layout);
   }
-  let both = LinearLayout::horizontal().child(movement_column).child(DummyView).child(games_column);
-  LinearLayout::vertical().child(TextView::new(format!("{} games found", related_board.len()))).child(DummyView).child(both)
+  Dialog::around(lines).title(format!("{} games found", related_board.len())).full_height().fixed_width(45)
 }
-
+ 
 pub fn draw_movement_column(board_state: &BoardState) -> impl View {
   let mut white_column = LinearLayout::vertical();
   let mut black_column = LinearLayout::vertical();
+  let mut mvmt_count_col = LinearLayout::vertical();
   let seen     = ColorStyle::highlight();
   let not_seen = ColorStyle::secondary();
   for movement in board_state.moves.iter() {
-    let style = if movement.game_round >= board_state.curr_move_idx as i32 { not_seen } else { seen };
+    let style = if (movement.game_round - 1) >= board_state.curr_move_idx as i32 { not_seen } else { seen };
+    let mvmt_sans = TextView::new(format!("{}", movement.san_plus.0)).style(style);
     if movement.game_round % 2 == 1 {
-      let row = TextView::new(format!("{}. {} ", movement.game_round / 2, movement.san_plus.0)).style(style);
-      white_column.add_child(row);
+      white_column.add_child(mvmt_sans);
+      mvmt_count_col.add_child(TextView::new(format!("{}", (movement.game_round + 1)/2)))
     } else {
-      let row = TextView::new(format!(" {}", movement.san_plus.0)).style(style);
-      black_column.add_child(row);
+      black_column.add_child(mvmt_sans);
     }
   }
-  ScrollView::new(LinearLayout::horizontal().child(white_column).child(black_column)).show_scrollbars(true).max_height(20)
+  let columns = LinearLayout::horizontal()
+    .child(mvmt_count_col)
+    .child(DummyView)
+    .child(white_column)
+    .child(DummyView)
+    .child(black_column);
+  ScrollView::new(columns).show_scrollbars(true).scroll_strategy(ScrollStrategy::KeepRow).max_height(9)
 }
 
 pub fn draw_chess_board(board_state: &BoardState) -> impl View {
   let mut board_column = LinearLayout::vertical();
-  let white_style = ColorStyle::new(Color::TerminalDefault, ColorType::Color(Color::Light(BaseColor::Black)));
+  let white_style = ColorStyle::new(Color::TerminalDefault, Color::Light(BaseColor::Black));
   let black_style = ColorStyle::new(Color::TerminalDefault, Color::Dark(BaseColor::Black));
+  let chess_board = board_state.board();
   for row in (0..8).rev() {
     let mut row_layout = LinearLayout::horizontal()
       .child(TextView::new(format!("{} ", row + 1)));
     for col in 0..8 {
       let square = Square::new(row * 8 + col);
-      let piece = board_state.board().piece_at(square);
-      let character = maybe_piece_to_unicode(piece);
+      let piece = chess_board.piece_at(square);
+      let character = maybe_piece_to_unicode(piece);    
       let cell = TextView::new(format!(" {character} ")).style(
         if row % 2 != col % 2 {
           white_style
@@ -191,16 +216,16 @@ pub fn draw_chess_board(board_state: &BoardState) -> impl View {
   board_column
 }
 
-pub fn draw_board(board_state: &BoardState) -> impl View {
+pub fn draw_board_state(board_state: &BoardState) -> impl View {
   let game_description = LinearLayout::vertical()
     .child(TextView::new(format!("{} [W] vs {} [B]", board_state.game.white, board_state.game.black)))
     .child(TextView::new(format!("{} {}", board_state.game.event, board_state.game.datetime)));
   let board = draw_chess_board(board_state);
   let movement_column = draw_movement_column(board_state);
-  let middle = LinearLayout::horizontal().child(Panel::new(board)).child(Panel::new(movement_column));
+  let middle = LinearLayout::horizontal().child(board).child(movement_column);
   let related_games = draw_related_games_column(board_state);
-    
-  LinearLayout::vertical().child(Panel::new(game_description)).child(Panel::new(middle)).child(Panel::new(related_games))
+  let main_content = LinearLayout::vertical().child(Panel::new(game_description)).child(middle);
+  LinearLayout::vertical().child(Panel::new(main_content)).child(related_games)
 }
 
 pub fn maybe_piece_to_unicode(piece: Option<Piece>) -> char {

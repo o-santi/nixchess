@@ -1,3 +1,4 @@
+use log::LevelFilter;
 use sqlx::postgres::PgPoolOptions;
 use nixchess::{ui::cli_entrypoint, db::insert_games_from_file};
 use clap::{Parser, Subcommand};
@@ -25,6 +26,7 @@ enum Command {
 
 fn main() {
   let args = NixChessArgs::parse();
+  simple_logging::log_to_file("view.log", LevelFilter::Info).expect("Could not start logger");
   let db_url = args.db_url.unwrap_or_else(|| {
     dotenv::dotenv().ok();
     std::env::var("DATABASE_URL").expect("No database url in .env. Please provide one using -db url.")

@@ -7,12 +7,13 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.2.7", features = ["derive"] }
-cursive = "0.20.0"
-cursive-async-view = "0.6.0"
+cursive = { version = "0.20.0", features = ["crossterm-backend"] }
 dotenv = "0.15.0"
 kdam = "0.3.0"
+log = "0.4.17"
 pgn-reader = "0.24.0"
 shakmaty = "0.25.0"
+simple-logging = "2.0.2"
 sqlx = { version = "0.6.3", features=["postgres", "macros", "runtime-tokio-native-tls", "time", "chrono"] }
 tokio = { version = "1", features = ["full"] }
 
