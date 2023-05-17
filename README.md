@@ -2,7 +2,8 @@
 
 A chess opening explorer.
 
-
+![Screenshot of chessboard in terminal](./screenshot.png "Screenshot of chess board in terminal")
+*using the Fixedsys font on Windows Terminal*
 
 ## Running
 To run
@@ -19,4 +20,3 @@ This will create a postgres database instance in `~/var/pg`. Then, all you must 
 ```
 cargo run -- fill [PGN_FILE_PATH] --db_url postgres://root:root@localhost:[DB_URL_PORT]/sandbox
 ```
-
