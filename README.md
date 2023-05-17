@@ -1,13 +1,16 @@
-# Nixchess (Name TDB)
+# Nixchess
 
-A chess game terminal visualizer.
+A chess opening explorer.
 
+
+
+## Running
 To run
 ```rs
-cargo run -- view
+cargo run -- view --db_url {DATABASE_INSTANCE}
 ```
 
-This requires a valid chess game database. It can be built from a pgn file, in the following way:
+This requires a valid chess game database running. It can be built from a pgn file, in the following way:
 ```sh
 nix-shell
 scm sandbox -n pkg/nixchess-*
