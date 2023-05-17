@@ -21,8 +21,6 @@ with nixpkgs;
     buildInputs = old.buildInputs ++ [ncurses openssl.dev cargo];
     nativeBuildInputs = old.buildInputs ++ [pkg-config];
     packages = [cargo];
-    LOCALE_ARCHIVE="${pkgs.glibcLocales}/lib/locale/locale-archive";
-    LANG="en_US.UTF8";
   });
 }
 
