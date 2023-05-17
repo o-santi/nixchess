@@ -1,4 +1,3 @@
-with builtins;
 let
   scm_repo = (fetchTarball {
     url = let commit = "b23f0f3c9b985b74599d553b0a8b1c453309b0ed"; in "https://gitlab.com/deltaex/schematic/-/archive/${commit}/schematic-${commit}.tar.gz";
@@ -11,11 +10,19 @@ let
       scm_repo
     ];
   });
+  mozilla = import (builtins.fetchTarball https://github.com/mozilla/nixpkgs-mozilla/archive/master.tar.gz);
+  nixpkgs = import <nixpkgs> { overlays = [ mozilla ]; };
+in
 
-  # rustOverlay = builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz";  
-  # pkgs = import pinnedPkgs {
-  #   overlays = [ (import rustOverlay)];
-  # };
-in rec {
-  schematic = scm.shell;
-}    
+with nixpkgs;
+
+{
+  schematic = scm.shell.overrideAttrs(new: old: {
+    buildInputs = old.buildInputs ++ [ncurses openssl.dev cargo];
+    nativeBuildInputs = old.buildInputs ++ [pkg-config];
+    packages = [cargo];
+    LOCALE_ARCHIVE="${pkgs.glibcLocales}/lib/locale/locale-archive";
+    LANG="en_US.UTF8";
+  });
+}
+
