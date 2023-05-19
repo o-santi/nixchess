@@ -3,10 +3,9 @@ use crate::queries::{game_from_id, movements_from_game, movement_and_games_from_
 use cursive::event::{Event, Key};
 use cursive::theme::{ColorStyle, Color, BaseColor, Style, Effect};
 use cursive::view::{Resizable, ScrollStrategy};
-use log::{info, trace};
 use pgn_reader::{Square, Role, Color as PieceColor};
 use shakmaty::{Board, Piece, Chess, Position};
-use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, Panel, ScrollView, ProgressBar};
+use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, Panel, ScrollView};
 use cursive::traits::Nameable;
 use cursive::{Cursive, CursiveExt, View};
 use sqlx::Postgres;
@@ -24,12 +23,9 @@ pub struct BoardState {
 
 impl BoardState {
   async fn build(conn: &mut PoolConnection<Postgres>, game: Game) -> Result<Self, InsertionError> {
-    info!("fetching moves");
     let moves = movements_from_game(conn, game.id.clone()).await?;
-    info!("moves fetched");
     let mut related_games = Vec::with_capacity(moves.len());
     for movement in moves.iter() {
-      info!("fetching related games {}", movement.game_round);
       let related_game = if movement.game_round > 5 {
         movement_and_games_from_position(conn, movement.board).await?.into_iter().filter(|(x,_)| x.game_id != game.id).collect()
       } else {
@@ -45,38 +41,48 @@ impl BoardState {
     })
   }
 
-  fn board(&self) -> Board {
+  fn game_up_to_move(&self, move_idx: usize) -> Chess {
     let mut chess = Chess::default();
-    for movement in self.moves.iter().take(self.curr_move_idx) {
+    for movement in self.moves.iter().take(move_idx) {
       let mov = movement.san_plus.0.san.to_move(&chess).expect("invalid move in database");
       chess.play_unchecked(&mov);
     }
-    chess.board().clone()
+    chess
   }
 
-  // fn curr_square(&self) -> Option<Square> {
-  //   let mut chess = Chess::default();
-  //   for movement in self.moves.iter().take(self.curr_move_idx) {
-  //     let mov = movement.san_plus.0.san.to_move(&chess).expect("invalid move in database");
-  //     chess.play_unchecked(&mov);
-  //   }
-  //   self.moves
-  //     .get(self.curr_move_idx - 1)
-  //     .map(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").to())
-  // }
+  fn current_board(&self) -> Board {
+    let game = self.game_up_to_move(self.curr_move_idx);
+    game.board().clone()
+  }
+
+  fn last_move_from_square(&self) -> Option<Square> {
+    if self.curr_move_idx == 0 {
+      return None
+    }
+    let chess = self.game_up_to_move(self.curr_move_idx - 1);
+    self.moves
+      .get(self.curr_move_idx - 1)
+      .map(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").from())
+      .flatten()
+  }
+  fn last_move_to_square(&self) -> Option<Square> {
+    if self.curr_move_idx == 0 {
+      return None
+    }
+    let chess = self.game_up_to_move(self.curr_move_idx - 1);
+    self.moves
+      .get(self.curr_move_idx - 1)
+      .map(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").to())
+  }
 }
 
 pub fn fetch_game(game_id: i32, db_url: String) -> Result<BoardState, InsertionError> {
   let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
   runtime.block_on(async {
     let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await?;
-    info!("Connected to database");
     let mut conn = pool.acquire().await?;
-    info!("Connection acquired");
     let game = game_from_id(&mut conn, game_id).await?;
-    info!("Game fetched");
     let board_state = BoardState::build(&mut conn, game).await?;
-    info!("board_state built");
     Ok::<BoardState, InsertionError>(board_state)
   })
 }
@@ -114,9 +120,7 @@ pub fn cli_entrypoint(db_url: String) {
             s.add_global_callback('q', |s| { s.pop_layer(); });
           },
         }
-      }
-        
-      ));
+      }));
   siv.run_crossterm().expect("Could not run on crossterm backend");
 }
 
@@ -169,8 +173,14 @@ pub fn draw_movement_column(board_state: &BoardState) -> impl View {
   let mut mvmt_count_col = LinearLayout::vertical();
   let seen     = Style { effects: Effect::Dim | Effect::Strikethrough, color: Color::Dark(BaseColor::Black).into() };
   let not_seen = Color::Dark(BaseColor::Black).into();
+  let current = Style { effects: Effect::Blink | Effect::Bold, color: Color::Light(BaseColor::Magenta).into() };
   for movement in board_state.moves.iter() {
-    let style = if (movement.game_round - 1) >= board_state.curr_move_idx as i32 { not_seen } else { seen };
+    let order = (movement.game_round - 1).cmp(&(board_state.curr_move_idx as i32));
+    let style = match order {
+      std::cmp::Ordering::Less => seen,
+      std::cmp::Ordering::Equal => current,
+      std::cmp::Ordering::Greater => not_seen,
+    };
     let mvmt_sans = TextView::new(format!("{}", movement.san_plus.0)).style(style);
     if movement.game_round % 2 == 1 {
       white_column.add_child(mvmt_sans);
@@ -190,9 +200,7 @@ pub fn draw_movement_column(board_state: &BoardState) -> impl View {
 
 pub fn draw_chess_board(board_state: &BoardState) -> impl View {
   let mut board_column = LinearLayout::vertical();
-  let light_square = Color::Light(BaseColor::Magenta);
-  let dark_square  = Color::Dark(BaseColor::Magenta);
-  let chess_board = board_state.board();
+  let chess_board = board_state.current_board();
   for row in (0..8).rev() {
     let mut row_layout = LinearLayout::horizontal()
       .child(DummyView)
@@ -201,14 +209,7 @@ pub fn draw_chess_board(board_state: &BoardState) -> impl View {
     for col in 0..8 {
       let square = Square::new(row * 8 + col);
       let piece = chess_board.piece_at(square);
-      let (piece_color, character) = maybe_piece_to_unicode_color(piece);
-      let cell = TextView::new(format!(" {character} ")).style(
-        if row % 2 != col % 2 {
-          ColorStyle::new(piece_color, light_square)
-        } else {
-          ColorStyle::new(piece_color, dark_square)
-        }
-      );
+      let cell = square_view(board_state, piece, square);
       row_layout.add_child(cell);
     }
     row_layout.add_child(DummyView);
@@ -230,8 +231,8 @@ pub fn draw_board_state(board_state: &BoardState) -> impl View {
   LinearLayout::vertical().child(Panel::new(main_content)).child(related_games)
 }
 
-pub fn maybe_piece_to_unicode_color(piece: Option<Piece>) -> (Color, char) {
-  let piece_char  = match piece {
+pub fn square_view(board_state: &BoardState, piece: Option<Piece>, square: Square) -> TextView {
+  let piece_char = match piece {
     Some(Piece { role: Role::King, ..   }) => '\u{265A}',
     Some(Piece { role: Role::Queen, ..  }) => '\u{265B}',
     Some(Piece { role: Role::Rook, ..   }) => '\u{265C}',
@@ -240,13 +241,31 @@ pub fn maybe_piece_to_unicode_color(piece: Option<Piece>) -> (Color, char) {
     Some(Piece { role: Role::Pawn, ..   }) => '\u{265F}',
     None => ' '
   };
-  let color = if let Some(Piece {color: PieceColor::White, ..}) = piece {
+  let piece_color = if let Some(Piece {color: PieceColor::White, ..}) = piece {
     Color::Dark(BaseColor::White)
   } else if let Some(Piece {color: PieceColor::Black, ..}) = piece {
     Color::Dark(BaseColor::Black)
   } else {
     Color::TerminalDefault
   };
-  (color, piece_char)
+  let (row, col) = {
+    let index: u16 = square.into();
+    (index / 8, index % 8)
+  };
+  let base_square_color = if row % 2 != col % 2 {
+    Color::Light(BaseColor::Magenta)
+  } else {
+    Color::Dark(BaseColor::Magenta)
+  };
+  let to_color = Color::Light(BaseColor::Yellow);
+  let from_color = Color::Dark(BaseColor::Yellow);
+  // not my proudest code, but i think this works.
+  let square_color = match (board_state.last_move_from_square(), board_state.last_move_to_square()) {
+    (_,      Some(to)) if square == to   => to_color,
+    (Some(from),    _) if square == from => from_color,
+    _ => base_square_color
+  };
+  let style =ColorStyle::new(piece_color, square_color);
+  TextView::new(format!(" {piece_char} ")).style(style)
 }
 

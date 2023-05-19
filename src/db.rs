@@ -1,8 +1,8 @@
 use shakmaty::{Chess, Position, zobrist::{ZobristHash, Zobrist64}};
 use pgn_reader::{RawHeader, SanPlus, Visitor, BufferedReader};
 use sqlx::types::chrono::{NaiveDate, NaiveTime, NaiveDateTime};
-use sqlx::{Error as DbErr, PgConnection, Acquire, Pool, Postgres};
-use sqlx::pool::PoolConnection;
+use sqlx::{Error as DbErr, PgConnection, Acquire};
+
 
 #[derive(Debug, Clone)]
 pub struct Game {
@@ -27,6 +27,7 @@ pub enum InsertionError {
   ParsingError,
   IncompleteDataError(String),
   IlegalMove(SanPlus),
+  IoError(std::io::Error)
 }
 
 
@@ -154,8 +155,8 @@ async fn insert_player(db: &mut PgConnection, name: String) -> Result<(), Insert
 
 impl ParsedChessGame {
   
-  pub async fn insert(self, mut pool: PoolConnection<sqlx::Postgres>) -> Result<(), InsertionError> {
-    let mut tx = pool.begin().await?;
+  pub async fn insert(self, conn: &mut PgConnection) -> Result<(), InsertionError> {
+    let mut tx = conn.begin().await?;
     insert_player(&mut tx, self.white.clone()).await?;
     insert_player(&mut tx, self.black.clone()).await?;
     let datetime: NaiveDateTime = NaiveDateTime::new(self.date, self.time);
@@ -170,29 +171,29 @@ impl ParsedChessGame {
       self.black_elo
     )
       .fetch_one(&mut tx)
-      .await?
-      .clone();
+      .await?;
     let mut board = Chess::default();
+    let mut game_ids = Vec::with_capacity(self.moves.len());
+    let mut board_hashes = Vec::with_capacity(self.moves.len());
+    let mut mvmts = Vec::with_capacity(self.moves.len());
+    let mut game_rounds = Vec::with_capacity(self.moves.len());
     for (index, movement) in self.moves.into_iter().enumerate() {
-      let move_to_play = movement
-        .0
-        .san
-        .to_move(&board)
+      let move_to_play = movement.0.san.to_move(&board)
         .map_err(|_| InsertionError::IlegalMove(movement.0.clone()))?
         .clone();
       let board_hash = board.zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal).0;
-      sqlx::query!(
-        r#"INSERT INTO Move (game_round, game_id, san_plus, board_hash) VALUES ($1, $2, $3, $4);"#,
-        (index + 1) as i32,
-        game_id.id,
-        format!("{}", movement.0),
-        board_hash as i64
-      ).execute(&mut tx)
-        .await?;
-      board = board
-        .play(&move_to_play)
-        .map_err(|_| InsertionError::IlegalMove(movement.0.clone()))?;
+      board.play_unchecked(&move_to_play);
+      game_ids.push(game_id.id);
+      board_hashes.push(board_hash as i64);
+      mvmts.push(format!("{}", movement.0));
+      game_rounds.push((index + 1) as i32)
     }
+    sqlx::query!(
+      r#"INSERT INTO Move (game_round, game_id, san_plus, board_hash)
+         SELECT * FROM UNNEST($1::int[], $2::int[], $3::text[], $4::bigint[]);"#,
+      &game_rounds, &game_ids, &mvmts, &board_hashes)
+      .execute(&mut tx)
+      .await?;
     tx.commit().await?;
     Ok(())
   }
@@ -203,32 +204,20 @@ impl From<DbErr> for InsertionError {
     InsertionError::DbError(value)
   }
 }
-
-fn parse_lichess_pgn(filepath: &str) -> Result<Vec<ParsedChessGame>, InsertionError> {
-  let game = std::fs::read_to_string(filepath).expect("Could not find file");
-  let mut reader = BufferedReader::new_cursor(&game);
-  let mut visitor = PGNParser::new();
-  let mut ret = Vec::new();
-  while let Some(game) = reader
-    .read_game(&mut visitor)
-    .expect("Could not read pgn file")
-  {
-    ret.push(game);
+impl From<std::io::Error> for InsertionError {
+  fn from(value: std::io::Error) -> Self {
+    InsertionError::IoError(value)
   }
-  Ok(ret)
 }
 
-pub async fn insert_games_from_file(pool: &Pool<Postgres>, file: &str) -> Result<(), InsertionError> {
-  println!("Parsing the games from file.");
-  let games = parse_lichess_pgn(file)?;
-  println!("Parsed!");
-  let mut tasks = Vec::new();
-  for game in kdam::tqdm!(games.into_iter()) {
-    let task = tokio::spawn(game.insert(pool.acquire().await.expect("Could not acquire handle")));
-    tasks.push(task)
-  }
-  for task in tasks {
-    let _ = task.await.map_err(|err| eprintln!("{}", err));
+pub async fn insert_games_from_file(conn: &mut PgConnection, file: &str) -> Result<(), InsertionError> {
+  let game_file = std::fs::read_to_string(file).expect("Could not find file");
+  let reader = BufferedReader::new_cursor(&game_file);
+  let mut visitor = PGNParser::new();
+  let games = reader.into_iter(&mut visitor);
+  for game in kdam::!(games.into_iter()) {
+    let game = game?;
+    game.insert(conn).await?;
   }
   Ok(())
 }

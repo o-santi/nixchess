@@ -9,6 +9,7 @@ edition = "2021"
 clap = { version = "4.2.7", features = ["derive"] }
 cursive = { version = "0.20.0", features = ["crossterm-backend"] }
 dotenv = "0.15.0"
+futures-util = "0.3.28"
 kdam = "0.3.0"
 log = "0.4.17"
 pgn-reader = "0.24.0"
