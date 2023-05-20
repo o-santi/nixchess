@@ -1,5 +1,5 @@
 use crate::db::{Move, Game, InsertionError};
-use crate::queries::{game_from_id, movements_from_game, movement_and_games_from_position, games_from_player};
+use crate::queries::{game_from_id, movements_from_game, games_from_player, related_games_from_game};
 use cursive::event::{Event, Key, EventResult};
 use cursive::theme::{ColorStyle, Color, BaseColor, Style, Effect};
 use cursive::view::{Resizable, ScrollStrategy};
@@ -23,15 +23,7 @@ pub struct BoardState {
 impl BoardState {
   async fn build(conn: &mut PgConnection, game: Game) -> Result<Self, InsertionError> {
     let moves = movements_from_game(conn, game.id.clone()).await?;
-    let mut related_games = Vec::with_capacity(moves.len());
-    for movement in moves.iter() {
-      let related_game = if movement.game_round > 5 {
-        movement_and_games_from_position(conn, movement.board).await?.into_iter().filter(|(x,_)| x.game_id != game.id).collect()
-      } else {
-        Vec::new()
-      };
-      related_games.push(related_game)
-    }
+    let related_games = related_games_from_game(conn, game.id.id).await?;
     Ok(BoardState {
       game,
       moves,
@@ -183,7 +175,7 @@ pub fn draw_related_games_column(board_state: &BoardState) -> impl View {
   }
   let related_games = ScrollView::new(lines).show_scrollbars(true);
   Dialog::around(related_games).title(format!("{} games reach this position", related_board.len())).full_height()
-    .max_width(45) // max width of board + movement column combined
+    .max_width(44) // max width of board + movement column combined
     // TODO: figure out a way to calculate this stuff before hand
 }
  

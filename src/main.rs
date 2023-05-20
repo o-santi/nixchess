@@ -24,7 +24,8 @@ enum Command {
 
 fn main() {
   let args = NixChessArgs::parse();
-  cursive::logger::init();
+  cursive::logger::init(); // enables debugging console.
+  // simple_logging::log_to_file("view.log", LevelFilter::Warn).expect("Could not start logger");
 
   std::panic::set_hook(Box::new(|err| {
     warn!("{}", err);
