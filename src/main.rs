@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 /// A chess game visualizer and database builder.
 struct NixChessArgs {
   #[clap(subcommand)]
-  command: Command,
+  command: Option<Command>,
   /// Games database to connect to. If none, uses the `DATABASE_URL` environment variable.
   #[clap(short, long)]
   db_url: Option<String>,
@@ -16,8 +16,6 @@ struct NixChessArgs {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-  /// Run chess game vizualizer 
-  View,
   /// Fill the database from a pgn file
   Fill {
     pgn_file: String
@@ -26,7 +24,7 @@ enum Command {
 
 fn main() {
   let args = NixChessArgs::parse();
-  simple_logging::log_to_file("view.log", LevelFilter::Warn).expect("Could not start logger");
+  cursive::logger::init();
 
   std::panic::set_hook(Box::new(|err| {
     warn!("{}", err);
@@ -36,11 +34,9 @@ fn main() {
     dotenv::dotenv().ok();
     std::env::var("DATABASE_URL").expect("No database url in .env. Please provide one using -db url.")
   });
-
-  
   match args.command {
-    Command::View => cli_entrypoint(db_url),
-    Command::Fill { pgn_file } => {
+    None => cli_entrypoint(db_url),
+    Some(Command::Fill { pgn_file }) => {
       let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
       runtime.block_on(async {
         let mut pool = PgConnection::connect(&db_url).await.expect("Could not connect to the database");

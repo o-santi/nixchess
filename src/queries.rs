@@ -1,11 +1,8 @@
 use crate::db::{InsertionError, Game, Move, GameId, SAN};
-use sqlx::pool::PoolConnection;
+use sqlx::PgConnection;
 use shakmaty::{san::SanPlus, zobrist::Zobrist64};
-use sqlx::Postgres;
 
-
-
-pub async fn games_from_player(db: &mut PoolConnection<Postgres>, player: &str) -> Result<Vec<Game>, InsertionError> {
+pub async fn games_from_player(db: &mut PgConnection, player: &str) -> Result<Vec<Game>, InsertionError> {
   let games = sqlx::query!(
     r#"SELECT id, event, datetime, black, white, white_elo, black_elo FROM Game WHERE black = ($1) OR white = ($1)"#,
     player
@@ -26,7 +23,7 @@ pub async fn games_from_player(db: &mut PoolConnection<Postgres>, player: &str) 
 }
 
 
-pub async fn movements_from_game(db: &mut PoolConnection<Postgres>, game_id: GameId) -> Result<Vec<Move>, InsertionError> {
+pub async fn movements_from_game(db: &mut PgConnection, game_id: GameId) -> Result<Vec<Move>, InsertionError> {
   let row = sqlx::query!(
     r#"SELECT game_round, game_id, san_plus, board_hash FROM Move WHERE game_id = ($1) ORDER BY game_round"#,
     game_id.id
@@ -41,7 +38,7 @@ pub async fn movements_from_game(db: &mut PoolConnection<Postgres>, game_id: Gam
   Ok(moves)
 }
 
-pub async fn movement_and_games_from_position(db: &mut PoolConnection<Postgres>, board_hash: Zobrist64) -> Result<Vec<(Move, Game)>, InsertionError> {
+pub async fn movement_and_games_from_position(db: &mut PgConnection, board_hash: Zobrist64) -> Result<Vec<(Move, Game)>, InsertionError> {
   let row = sqlx::query!(
     r#"SELECT game_round, game_id, san_plus, board_hash, white, black, event, datetime, white_elo, black_elo FROM (Move INNER JOIN Game ON game_id = id) WHERE board_hash = ($1)"#,
     board_hash.0 as i64
@@ -67,7 +64,7 @@ pub async fn movement_and_games_from_position(db: &mut PoolConnection<Postgres>,
   Ok(moves)
 }
 
-pub async fn game_from_move(db: &mut PoolConnection<Postgres>, movement: Move) -> Result<Game, InsertionError> {
+pub async fn game_from_move(db: &mut PgConnection, movement: Move) -> Result<Game, InsertionError> {
   let row = sqlx::query!(
     r#"SELECT id, white, black, event, datetime, white_elo, black_elo from Game INNER JOIN move ON id = game_id WHERE id = ($1)"#,
     movement.game_id.id
@@ -86,7 +83,7 @@ pub async fn game_from_move(db: &mut PoolConnection<Postgres>, movement: Move) -
   Ok(game)
 }
 
-pub async fn game_from_id(db: &mut PoolConnection<Postgres>, game_id: i32) -> Result<Game, InsertionError> {
+pub async fn game_from_id(db: &mut PgConnection, game_id: i32) -> Result<Game, InsertionError> {
   let row = sqlx::query!(
     r#"SELECT id, white, black, event, datetime, white_elo, black_elo from Game WHERE id = ($1)"#,
     game_id

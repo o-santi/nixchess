@@ -1,19 +1,18 @@
 use crate::db::{Move, Game, InsertionError};
-use crate::queries::{game_from_id, movements_from_game, movement_and_games_from_position};
-use cursive::event::{Event, Key};
+use crate::queries::{game_from_id, movements_from_game, movement_and_games_from_position, games_from_player};
+use cursive::event::{Event, Key, EventResult};
 use cursive::theme::{ColorStyle, Color, BaseColor, Style, Effect};
 use cursive::view::{Resizable, ScrollStrategy};
 use pgn_reader::{Square, Role, Color as PieceColor};
 use shakmaty::{Board, Piece, Chess, Position};
-use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, Panel, ScrollView};
+use cursive::views::{Dialog, LinearLayout, EditView, TextView, DummyView, Panel, ScrollView, SelectView};
 use cursive::traits::Nameable;
 use cursive::{Cursive, CursiveExt, View};
-use sqlx::Postgres;
-use sqlx::pool::PoolConnection;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgConnection, Connection};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[derive(Debug)]
 pub struct BoardState {
   game: Game,
   moves: Vec<Move>,
@@ -22,7 +21,7 @@ pub struct BoardState {
 }
 
 impl BoardState {
-  async fn build(conn: &mut PoolConnection<Postgres>, game: Game) -> Result<Self, InsertionError> {
+  async fn build(conn: &mut PgConnection, game: Game) -> Result<Self, InsertionError> {
     let moves = movements_from_game(conn, game.id.clone()).await?;
     let mut related_games = Vec::with_capacity(moves.len());
     for movement in moves.iter() {
@@ -62,8 +61,7 @@ impl BoardState {
     let chess = self.game_up_to_move(self.curr_move_idx - 1);
     self.moves
       .get(self.curr_move_idx - 1)
-      .map(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").from())
-      .flatten()
+      .and_then(|mvmt| mvmt.san_plus.0.san.to_move(&chess).expect("invalid move in database").from())
   }
   fn last_move_to_square(&self) -> Option<Square> {
     if self.curr_move_idx == 0 {
@@ -76,14 +74,21 @@ impl BoardState {
   }
 }
 
-pub fn fetch_game(game_id: i32, db_url: String) -> Result<BoardState, InsertionError> {
-  let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
-  runtime.block_on(async {
-    let pool = PgPoolOptions::new().max_connections(20).connect(&db_url).await?;
-    let mut conn = pool.acquire().await?;
+fn fetch_game(db_url: String, game_id: i32) -> Result<BoardState, InsertionError> {
+  let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
+  rt.block_on(async {
+    let mut conn = PgConnection::connect(&db_url).await?;
     let game = game_from_id(&mut conn, game_id).await?;
     let board_state = BoardState::build(&mut conn, game).await?;
-    Ok::<BoardState, InsertionError>(board_state)
+    Ok(board_state)
+  })
+}
+fn fetch_games_from_player(db_url: &str, player_name: &str) -> Result<Vec<Game>, InsertionError> {
+  let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
+  rt.block_on(async {
+    let mut conn = PgConnection::connect(db_url).await?;
+    let games = games_from_player(&mut conn, player_name).await?;
+    Ok(games)
   })
 }
 
@@ -91,65 +96,80 @@ pub fn cli_entrypoint(db_url: String) {
   let mut siv = cursive::default();
   siv.set_window_title("Nixchess");
   siv.set_user_data(db_url);
-  siv.add_layer(
-    Dialog::around(
-      EditView::new()
-        .with_name("game_id")
-    )
-      .title("Enter game id:")
-      .button("Ok", |s| {
-        let game_id = s.call_on_name("game_id", |v: &mut EditView| v.get_content()).unwrap();
-        let db_url = s.take_user_data::<String>().unwrap();
-        match game_id.parse::<i32>() {
-          Ok(id) => {
-            match fetch_game(id, db_url) {
-              Ok(board_state) => {
-                s.pop_layer();
-                show_game(s, Rc::new(RefCell::new(board_state)));
-              }
-              Err(err) => {
-                let debug = Dialog::around(TextView::new(format!("{:?}", err)));
-                s.add_layer(debug);
-                s.add_global_callback('q', |s| { s.pop_layer(); });
-              },
-            }
-          }
-          Err(err) => {
-            let debug = Dialog::around(TextView::new(err.to_string()));
-            s.add_layer(debug);
-            s.add_global_callback('q', |s| { s.pop_layer(); });
-          },
-        }
-      }));
+  siv.add_global_callback('q', |s| { s.quit(); });
+  siv.add_global_callback('\'', Cursive::toggle_debug_console);
+  siv.add_layer(player_selector());
   siv.run_crossterm().expect("Could not run on crossterm backend");
 }
 
-pub fn show_game(siv: &mut Cursive, board: Rc<RefCell<BoardState>>) {
-  let board_view = draw_board_state(&board.borrow_mut());
-  siv.add_layer(board_view);
-  let board_right = board.clone();
-  let board_left = board;
-  siv.add_global_callback(Event::Key(Key::Right), move |siv| {
-    siv.pop_layer();
-    let mut board = board_right.borrow_mut();
-    if board.curr_move_idx < board.moves.len() {
-      board.curr_move_idx += 1;
-    }
-    siv.add_layer(draw_board_state(&board));
+fn player_selector() -> impl View {
+  Dialog::around(EditView::new().with_name("player_name"))
+    .title("Player name:")
+    .button("Ok", move |s| {
+      let player_name = s.call_on_name("player_name", |v: &mut EditView| v.get_content()).unwrap();
+      let db_url = s.user_data::<String>().unwrap().clone();
+      let games = fetch_games_from_player(&db_url, &player_name);
+      match games {
+        Ok(games) => {
+          s.add_layer(game_selector((*player_name).clone(), games, db_url))
+        },
+        Err(err) => error_pop_up(s, err),
+      };
+    })
+}
+
+fn game_selector(player_name: String, games: Vec<Game>, db_url: String) -> impl View {
+  let mut game_selector = SelectView::new();
+  let games_number = games.len();
+  for game in games {
+    let game_description = if game.white == player_name {
+      format!("[W] vs {} - {} @ {}", game.black, game.event, game.datetime)
+    } else {
+      format!("[B] vs {} - {} @ {}", game.white, game.event, game.datetime)
+    };
+    game_selector.add_item(game_description, game);
+  }
+  game_selector.set_on_submit(move |s, game| {
+    s.pop_layer();
+    show_game(s, game, db_url.clone())
   });
-  
-  siv.add_global_callback(Event::Key(Key::Left), move |siv| {
-    siv.pop_layer();
-    let mut board = board_left.borrow_mut();
-    if board.curr_move_idx > 0 {
-      board.curr_move_idx -= 1;
+  Dialog::around(ScrollView::new(game_selector).show_scrollbars(true).max_height(10)).title(format!("{games_number} games played by {player_name}"))
+}
+
+fn error_pop_up<T: std::fmt::Debug>(siv: &mut Cursive, err: T) {
+  let debug = Dialog::around(TextView::new(format!("{:?}",err)));
+  siv.add_layer(debug);
+}
+
+fn show_game(siv: &mut Cursive, game: &Game, db_url: String) {
+  let board_state = fetch_game(db_url, game.id.id).expect("Could not find game");
+  siv.add_layer(draw_board_state(&board_state));
+
+  // TODO: rewrite this mess
+  // possibly using View's internal `on_event`.
+  let board_1 = Rc::new(RefCell::new(board_state));
+  let board_2 = board_1.clone();
+  siv.add_global_callback(Key::Right, move |s| {
+    let mut board_state = board_1.borrow_mut();
+    if board_state.curr_move_idx < board_state.moves.len() {
+      board_state.curr_move_idx += 1;
+      s.pop_layer();
+      s.add_layer(draw_board_state(&board_state));
     }
-    siv.add_layer(draw_board_state(&board));
+  });
+  siv.add_global_callback(Key::Left, move |s| {
+    let mut board_state = board_2.borrow_mut();
+    if board_state.curr_move_idx > 0 {
+      board_state.curr_move_idx -= 1;
+      s.pop_layer();
+      s.add_layer(draw_board_state(&board_state))
+    }
   });
 }
 
 pub fn draw_related_games_column(board_state: &BoardState) -> impl View {
-  let related_board = board_state.related_games.get(board_state.curr_move_idx).unwrap();
+  let empty = Vec::new();
+  let related_board = board_state.related_games.get(board_state.curr_move_idx).unwrap_or(&empty);
   let mut lines = LinearLayout::vertical();
   for (played_move, game) in related_board.iter() {
     let mvmt = TextView::new(if played_move.game_round % 2 == 1 {
@@ -219,7 +239,7 @@ pub fn draw_chess_board(board_state: &BoardState) -> impl View {
   board_column
 }
 
-pub fn draw_board_state(board_state: &BoardState) -> impl View {
+fn draw_board_state(board_state: &BoardState) -> impl View {
   let game_description = LinearLayout::vertical()
     .child(TextView::new(format!("{} [W] vs {} [B]", board_state.game.white, board_state.game.black)))
     .child(TextView::new(format!("{} {}", board_state.game.event, board_state.game.datetime)));
@@ -230,7 +250,7 @@ pub fn draw_board_state(board_state: &BoardState) -> impl View {
   let main_content = LinearLayout::vertical().child(Panel::new(game_description)).child(middle);
   LinearLayout::vertical().child(Panel::new(main_content)).child(related_games)
 }
-
+  
 pub fn square_view(board_state: &BoardState, piece: Option<Piece>, square: Square) -> TextView {
   let piece_char = match piece {
     Some(Piece { role: Role::King, ..   }) => '\u{265A}',

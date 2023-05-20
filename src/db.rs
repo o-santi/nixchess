@@ -215,7 +215,7 @@ pub async fn insert_games_from_file(conn: &mut PgConnection, file: &str) -> Resu
   let reader = BufferedReader::new_cursor(&game_file);
   let mut visitor = PGNParser::new();
   let games = reader.into_iter(&mut visitor);
-  for game in kdam::!(games.into_iter()) {
+  for game in kdam::tqdm!(games.into_iter()) {
     let game = game?;
     game.insert(conn).await?;
   }
