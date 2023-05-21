@@ -24,7 +24,7 @@ enum Command {
 
 fn main() {
   let args = NixChessArgs::parse();
-  cursive::logger::init(); // enables debugging console.
+  
   // simple_logging::log_to_file("view.log", LevelFilter::Warn).expect("Could not start logger");
 
   std::panic::set_hook(Box::new(|err| {
@@ -36,7 +36,10 @@ fn main() {
     std::env::var("DATABASE_URL").expect("No database url in .env. Please provide one using -db url.")
   });
   match args.command {
-    None => cli_entrypoint(db_url),
+    None => {
+      cursive::logger::init(); // enables debugging console.
+      cli_entrypoint(db_url)
+    },
     Some(Command::Fill { pgn_file }) => {
       let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
       runtime.block_on(async {

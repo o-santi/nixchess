@@ -160,20 +160,7 @@ impl ParsedChessGame {
     insert_player(&mut tx, self.white.clone()).await?;
     insert_player(&mut tx, self.black.clone()).await?;
     let datetime: NaiveDateTime = NaiveDateTime::new(self.date, self.time);
-    let game_id = sqlx::query_as!(
-      GameId,
-      r#"INSERT INTO Game (white, black, event, datetime, white_elo, black_elo) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id;"#,
-      self.white,
-      self.black,
-      self.event,
-      datetime,
-      self.white_elo,
-      self.black_elo
-    )
-      .fetch_one(&mut tx)
-      .await?;
     let mut board = Chess::default();
-    let mut game_ids = Vec::with_capacity(self.moves.len());
     let mut board_hashes = Vec::with_capacity(self.moves.len());
     let mut mvmts = Vec::with_capacity(self.moves.len());
     let mut game_rounds = Vec::with_capacity(self.moves.len());
@@ -183,15 +170,28 @@ impl ParsedChessGame {
         .clone();
       let board_hash = board.zobrist_hash::<Zobrist64>(shakmaty::EnPassantMode::Legal).0;
       board.play_unchecked(&move_to_play);
-      game_ids.push(game_id.id);
       board_hashes.push(board_hash as i64);
       mvmts.push(format!("{}", movement.0));
       game_rounds.push((index + 1) as i32)
     }
     sqlx::query!(
-      r#"INSERT INTO Move (game_round, game_id, san_plus, board_hash)
-         SELECT * FROM UNNEST($1::int[], $2::int[], $3::text[], $4::bigint[]);"#,
-      &game_rounds, &game_ids, &mvmts, &board_hashes)
+      r#"WITH gid as (
+           INSERT INTO Game (white, black, event, datetime, white_elo, black_elo)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id
+         )
+         INSERT INTO Move (game_round, san_plus, board_hash, game_id)
+         SELECT * FROM UNNEST($7::int[], $8::text[], $9::bigint[])
+         CROSS JOIN gid"#,
+      self.white,
+      self.black,
+      self.event,
+      datetime,
+      self.white_elo,
+      self.black_elo,
+      &game_rounds,
+      &mvmts,
+      &board_hashes)
       .execute(&mut tx)
       .await?;
     tx.commit().await?;

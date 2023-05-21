@@ -18,7 +18,7 @@ with nixpkgs;
 
 {
   schematic = scm.shell.overrideAttrs(new: old: {
-    buildInputs = old.buildInputs ++ [ncurses openssl.dev cargo rustc];
+    buildInputs = old.buildInputs ++ [ncurses openssl.dev cargo rustc nix];
     nativeBuildInputs = old.buildInputs ++ [pkg-config];
     packages = [cargo];
   });
