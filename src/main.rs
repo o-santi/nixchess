@@ -26,28 +26,31 @@ fn main() -> Result<(), InsertionError> {
   let args = NixChessArgs::parse();
   
   // simple_logging::log_to_file("view.log", LevelFilter::Warn).expect("Could not start logger");
-
-  std::panic::set_hook(Box::new(|err| {
-    warn!("{}", err);
-  }));
-  
   let db_url = args.db_url.unwrap_or_else(|| {
     dotenv::dotenv().ok();
     std::env::var("DATABASE_URL").expect("No database url in .env. Please provide one using -db url.")
   });
   match args.command {
     None => {
+      std::panic::set_hook(Box::new(|err| {
+        warn!("{err}");
+      }));
       cursive::logger::init(); // enables debugging console.
+      
       cli_entrypoint(db_url);
+      
       Ok(())
     },
     Some(Command::Fill { pgn_file }) => {
       let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(4)
+        .worker_threads(1)
         .build()?;
       runtime.block_on(async {
-        let pool = PgPoolOptions::new().min_connections(20).connect(&db_url).await?;
+        let pool = PgPoolOptions::new()
+          .min_connections(20)
+          .max_connections(100)
+          .connect(&db_url).await?;
         insert_games_from_file(pool, &pgn_file).await?;
         Ok::<(), InsertionError>(())
       })

@@ -218,10 +218,10 @@ pub async fn insert_games_from_file(conn: PgPool, file: &str) -> Result<(), Inse
   let mut games = 0;
   while let Some(ret) = futures.next().await {
     pb.update(1);
-    if let Err(err) = ret {
-      println!("{err:?}");
-    } else {
-      games += 1;
+    pb.set_description(format!("{} active connections", conn.size()));
+    match ret.unwrap() {
+      Ok(_) => { games += 1; }
+      Err(err) => { pb.write(format!("{err:?}")); }
     }
   }
   println!("");
