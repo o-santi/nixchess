@@ -169,7 +169,7 @@ pub fn draw_related_games_column(board_state: &BoardState) -> impl View {
     } else {
       format!("{} ... {}", played_move.game_round / 2, played_move.san_plus.0)
     });
-    let game = TextView::new(format!("{} ({}) vs {} ({})", game.white, game.white_elo.unwrap(), game.black, game.black_elo.unwrap()));
+    let game = TextView::new(format!("{} ({:?}) vs {} ({:?})", game.white, game.white_elo, game.black, game.black_elo));
     let layout = LinearLayout::horizontal().child(mvmt).child(DummyView).child(game);
     lines.add_child(layout);
   }

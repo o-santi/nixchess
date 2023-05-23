@@ -1,5 +1,5 @@
-use log::{LevelFilter, warn};
-use sqlx::{Connection, PgConnection};
+use log::warn;
+use sqlx::postgres::PgPoolOptions;
 use nixchess::{ui::cli_entrypoint, db::{insert_games_from_file, InsertionError}};
 use clap::{Parser, Subcommand};
 
@@ -42,10 +42,13 @@ fn main() -> Result<(), InsertionError> {
       Ok(())
     },
     Some(Command::Fill { pgn_file }) => {
-      let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+      let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(4)
+        .build()?;
       runtime.block_on(async {
-        let mut pool = PgConnection::connect(&db_url).await?;
-        insert_games_from_file(&mut pool, &pgn_file).await?;
+        let pool = PgPoolOptions::new().min_connections(20).connect(&db_url).await?;
+        insert_games_from_file(pool, &pgn_file).await?;
         Ok::<(), InsertionError>(())
       })
     },

@@ -1,7 +1,10 @@
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
 use shakmaty::{Chess, Position, zobrist::{ZobristHash, Zobrist64}};
 use pgn_reader::{RawHeader, SanPlus, Visitor, BufferedReader};
-use sqlx::types::chrono::{NaiveDate, NaiveTime, NaiveDateTime};
-use sqlx::{Error as DbErr, PgConnection, Acquire};
+use sqlx::{types::chrono::{NaiveDate, NaiveTime, NaiveDateTime}, PgPool};
+use sqlx::Error as DbErr;
+use kdam::{BarExt, Column};
 
 
 #[derive(Debug, Clone)]
@@ -146,7 +149,7 @@ impl Visitor for PGNParser {
 
 impl ParsedChessGame {
   
-  pub async fn insert(self, conn: &mut PgConnection) -> Result<(), InsertionError> {
+  pub async fn insert(self, conn: PgPool) -> Result<(), InsertionError> {
     let datetime: NaiveDateTime = NaiveDateTime::new(self.date, self.time);
     let mut board = Chess::default();
     let mut board_hashes = Vec::with_capacity(self.moves.len());
@@ -164,10 +167,7 @@ impl ParsedChessGame {
     }
     sqlx::query!(
       r#"WITH white_player AS (
-           INSERT INTO Player VALUES ($1)
-           ON CONFLICT DO NOTHING RETURNING player_name
-         ), black_player AS (
-           INSERT INTO Player VALUES ($2)
+           INSERT INTO Player VALUES ($1), ($2)
            ON CONFLICT DO NOTHING RETURNING player_name
          ), gid AS (
            INSERT INTO Game (white, black, event, datetime, white_elo, black_elo)
@@ -186,7 +186,7 @@ impl ParsedChessGame {
       &game_rounds,
       &mvmts,
       &board_hashes)
-      .execute(conn)
+      .execute(&conn)
       .await?;
     Ok(())
   }
@@ -203,14 +203,28 @@ impl From<std::io::Error> for InsertionError {
   }
 }
 
-pub async fn insert_games_from_file(conn: &mut PgConnection, file: &str) -> Result<(), InsertionError> {
+pub async fn insert_games_from_file(conn: PgPool, file: &str) -> Result<(), InsertionError> {
   let game_file = std::fs::read_to_string(file)?;
   let reader = BufferedReader::new_cursor(&game_file);
   let mut visitor = PGNParser::new();
-  let games = reader.into_iter(&mut visitor);
-  for game in kdam::tqdm!(games.into_iter()) {
-    let game = game?;
-    game.insert(conn).await?;
+  let games = reader
+    .into_iter(&mut visitor)
+    .filter_map(|x| x.ok())
+    .map(|game| {
+      tokio::spawn(game.insert(conn.clone()))
+    });
+  let mut futures = FuturesUnordered::from_iter(games);
+  let mut pb = kdam::tqdm!(total=0);
+  let mut games = 0;
+  while let Some(ret) = futures.next().await {
+    pb.update(1);
+    if let Err(err) = ret {
+      println!("{err:?}");
+    } else {
+      games += 1;
+    }
   }
+  println!("");
+  println!("{} games inserted in {:.2} seconds.", games, pb.elapsed_time);
   Ok(())
 }
