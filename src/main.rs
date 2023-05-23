@@ -44,11 +44,11 @@ fn main() -> Result<(), InsertionError> {
     Some(Command::Fill { pgn_file }) => {
       let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .worker_threads(1)
+        .worker_threads(4)
         .build()?;
       runtime.block_on(async {
         let pool = PgPoolOptions::new()
-          .min_connections(20)
+          .min_connections(50)
           .max_connections(100)
           .connect(&db_url).await?;
         insert_games_from_file(pool, &pgn_file).await?;
