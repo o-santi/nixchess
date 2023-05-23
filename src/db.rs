@@ -144,21 +144,9 @@ impl Visitor for PGNParser {
   }
 }
 
-async fn insert_player(db: &mut PgConnection, name: String) -> Result<(), InsertionError> {
-  sqlx::query!(
-    r#"INSERT INTO Player (player_name) VALUES ($1) ON CONFLICT DO NOTHING"#,
-    name
-  ).execute(db)
-    .await?;
-  Ok(())
-}
-
 impl ParsedChessGame {
   
   pub async fn insert(self, conn: &mut PgConnection) -> Result<(), InsertionError> {
-    let mut tx = conn.begin().await?;
-    insert_player(&mut tx, self.white.clone()).await?;
-    insert_player(&mut tx, self.black.clone()).await?;
     let datetime: NaiveDateTime = NaiveDateTime::new(self.date, self.time);
     let mut board = Chess::default();
     let mut board_hashes = Vec::with_capacity(self.moves.len());
@@ -175,7 +163,13 @@ impl ParsedChessGame {
       game_rounds.push((index + 1) as i32)
     }
     sqlx::query!(
-      r#"WITH gid as (
+      r#"WITH white_player AS (
+           INSERT INTO Player VALUES ($1)
+           ON CONFLICT DO NOTHING RETURNING player_name
+         ), black_player AS (
+           INSERT INTO Player VALUES ($2)
+           ON CONFLICT DO NOTHING RETURNING player_name
+         ), gid AS (
            INSERT INTO Game (white, black, event, datetime, white_elo, black_elo)
            VALUES ($1, $2, $3, $4, $5, $6)
            RETURNING id
@@ -192,9 +186,8 @@ impl ParsedChessGame {
       &game_rounds,
       &mvmts,
       &board_hashes)
-      .execute(&mut tx)
+      .execute(conn)
       .await?;
-    tx.commit().await?;
     Ok(())
   }
 }
@@ -211,7 +204,7 @@ impl From<std::io::Error> for InsertionError {
 }
 
 pub async fn insert_games_from_file(conn: &mut PgConnection, file: &str) -> Result<(), InsertionError> {
-  let game_file = std::fs::read_to_string(file).expect("Could not find file");
+  let game_file = std::fs::read_to_string(file)?;
   let reader = BufferedReader::new_cursor(&game_file);
   let mut visitor = PGNParser::new();
   let games = reader.into_iter(&mut visitor);

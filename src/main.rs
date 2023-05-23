@@ -1,6 +1,6 @@
 use log::{LevelFilter, warn};
 use sqlx::{Connection, PgConnection};
-use nixchess::{ui::cli_entrypoint, db::insert_games_from_file};
+use nixchess::{ui::cli_entrypoint, db::{insert_games_from_file, InsertionError}};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -22,7 +22,7 @@ enum Command {
   }
 }
 
-fn main() {
+fn main() -> Result<(), InsertionError> {
   let args = NixChessArgs::parse();
   
   // simple_logging::log_to_file("view.log", LevelFilter::Warn).expect("Could not start logger");
@@ -38,14 +38,16 @@ fn main() {
   match args.command {
     None => {
       cursive::logger::init(); // enables debugging console.
-      cli_entrypoint(db_url)
+      cli_entrypoint(db_url);
+      Ok(())
     },
     Some(Command::Fill { pgn_file }) => {
-      let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+      let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
       runtime.block_on(async {
-        let mut pool = PgConnection::connect(&db_url).await.expect("Could not connect to the database");
-        insert_games_from_file(&mut pool, &pgn_file).await.unwrap();
+        let mut pool = PgConnection::connect(&db_url).await?;
+        insert_games_from_file(&mut pool, &pgn_file).await?;
+        Ok::<(), InsertionError>(())
       })
     },
-  };
+  }
 }
