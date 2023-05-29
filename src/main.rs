@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use log::warn;
 use sqlx::postgres::PgPoolOptions;
 use nixchess::{ui::cli_entrypoint, db::{insert_games_from_file, InsertionError}};
@@ -50,6 +52,7 @@ fn main() -> Result<(), InsertionError> {
         let pool = PgPoolOptions::new()
           .min_connections(50)
           .max_connections(100)
+          .acquire_timeout(Duration::from_secs(10 * 60)) // TODO: just a work around, find better solution for connections timing-out
           .connect(&db_url).await?;
         insert_games_from_file(pool, &pgn_file).await?;
         Ok::<(), InsertionError>(())

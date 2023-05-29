@@ -10,17 +10,15 @@ let
       scm_repo
     ];
   });
-  mozilla = import (builtins.fetchTarball https://github.com/mozilla/nixpkgs-mozilla/archive/master.tar.gz);
-  nixpkgs = import <nixpkgs> { overlays = [ mozilla ]; };
+  oxalica = [ (import (builtins.fetchTarball "https://github.com/oxalica/rust-overlay/archive/master.tar.gz")) ];
+  nixpkgs = import <nixpkgs> { overlays = oxalica; };
 in
 
 with nixpkgs;
 
 {
   schematic = scm.shell.overrideAttrs(new: old: {
-    buildInputs = old.buildInputs ++ [ncurses openssl.dev cargo rustc nix];
+    buildInputs = old.buildInputs ++ [openssl.dev rust-bin.stable."1.69.0".minimal nix];
     nativeBuildInputs = old.buildInputs ++ [pkg-config];
-    packages = [cargo];
   });
 }
-
