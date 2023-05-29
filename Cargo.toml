@@ -15,7 +15,7 @@ log = "0.4.17"
 pgn-reader = "0.24.0"
 shakmaty = "0.25.0"
 simple-logging = "2.0.2"
-sqlx = { version = "0.6.3", features=["postgres", "macros", "runtime-tokio-native-tls", "time", "chrono"] }
+sqlx = { version = "0.6.3", features=["postgres", "macros", "runtime-tokio-native-tls", "time", "chrono", "offline"] }
 tokio = { version = "1", features = ["full"] }
 
 [dependencies.cursive]

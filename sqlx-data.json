@@ -1,0 +1,383 @@
+{
+  "db": "PostgreSQL",
+  "2f3283357363edf7b6b07b5db34754e1cbb899ec63417f16dc07b3b78d8623bd": {
+    "describe": {
+      "columns": [
+        {
+          "name": "game_round",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "game_id",
+          "ordinal": 1,
+          "type_info": "Int4"
+        },
+        {
+          "name": "san_plus",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "board_hash",
+          "ordinal": 3,
+          "type_info": "Int8"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "SELECT game_round, game_id, san_plus, board_hash FROM Move WHERE game_id = ($1) ORDER BY game_round"
+  },
+  "46134ea05a72ca3373b6da6c8f2ed94f9084cda95e934a132a13beb890f3b28e": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "white",
+          "ordinal": 1,
+          "type_info": "Text"
+        },
+        {
+          "name": "black",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "event",
+          "ordinal": 3,
+          "type_info": "Text"
+        },
+        {
+          "name": "datetime",
+          "ordinal": 4,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "white_elo",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "black_elo",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "SELECT id, white, black, event, datetime, white_elo, black_elo from Game WHERE id = ($1)"
+  },
+  "4c7c5e2f151696ef29798827227ffe9028e683959bf80219ef99fc1cc267488d": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "event",
+          "ordinal": 1,
+          "type_info": "Text"
+        },
+        {
+          "name": "datetime",
+          "ordinal": 2,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "black",
+          "ordinal": 3,
+          "type_info": "Text"
+        },
+        {
+          "name": "white",
+          "ordinal": 4,
+          "type_info": "Text"
+        },
+        {
+          "name": "white_elo",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "black_elo",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT id, event, datetime, black, white, white_elo, black_elo FROM Game WHERE black = ($1) OR white = ($1)"
+  },
+  "8b8bb0270a1388371d07f51e9e25d27a143e5bda040fcf2efb38b1dcfbde105d": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Text",
+          "Text",
+          "Text",
+          "Timestamp",
+          "Int4",
+          "Int4",
+          "Int4Array",
+          "TextArray",
+          "Int8Array"
+        ]
+      }
+    },
+    "query": "WITH white_player AS (\n           INSERT INTO Player VALUES ($1), ($2)\n           ON CONFLICT DO NOTHING RETURNING player_name\n         ), gid AS (\n           INSERT INTO Game (white, black, event, datetime, white_elo, black_elo)\n           VALUES ($1, $2, $3, $4, $5, $6)\n           RETURNING id\n         )\n         INSERT INTO Move (game_round, san_plus, board_hash, game_id)\n         SELECT * FROM UNNEST($7::int[], $8::text[], $9::bigint[])\n         CROSS JOIN gid"
+  },
+  "93746d5929947148dbad8d69c4810f141d79fef0386f7d4bd89021e3200fa803": {
+    "describe": {
+      "columns": [
+        {
+          "name": "id",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "white",
+          "ordinal": 1,
+          "type_info": "Text"
+        },
+        {
+          "name": "black",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "event",
+          "ordinal": 3,
+          "type_info": "Text"
+        },
+        {
+          "name": "datetime",
+          "ordinal": 4,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "white_elo",
+          "ordinal": 5,
+          "type_info": "Int4"
+        },
+        {
+          "name": "black_elo",
+          "ordinal": 6,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "SELECT id, white, black, event, datetime, white_elo, black_elo from Game INNER JOIN move ON id = game_id WHERE id = ($1)"
+  },
+  "ad51616a5418a2777785c22d65f78f1f4a2f818ddd3c271447cf7de4dfaef6d4": {
+    "describe": {
+      "columns": [
+        {
+          "name": "game_round",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "board_hash",
+          "ordinal": 1,
+          "type_info": "Int8"
+        },
+        {
+          "name": "game_id",
+          "ordinal": 2,
+          "type_info": "Int4"
+        },
+        {
+          "name": "san_plus",
+          "ordinal": 3,
+          "type_info": "Text"
+        },
+        {
+          "name": "black",
+          "ordinal": 4,
+          "type_info": "Text"
+        },
+        {
+          "name": "white",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "datetime",
+          "ordinal": 6,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "id",
+          "ordinal": 7,
+          "type_info": "Int4"
+        },
+        {
+          "name": "event",
+          "ordinal": 8,
+          "type_info": "Text"
+        },
+        {
+          "name": "white_elo",
+          "ordinal": 9,
+          "type_info": "Int4"
+        },
+        {
+          "name": "black_elo",
+          "ordinal": 10,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Int4"
+        ]
+      }
+    },
+    "query": "WITH game_moves as (\n        SELECT game_round, board_hash FROM Move WHERE game_id = ($1) AND game_round > 6\n    )\n       SELECT Related.game_round, Related.board_hash, Related.game_id, Related.san_plus, black, white, datetime, id, event, white_elo, black_elo\n       FROM (Move as Related INNER JOIN game_moves ON (Related.board_hash = game_moves.board_hash) INNER JOIN Game ON Related.game_id = id)\n       WHERE Related.game_id != ($1)\n    "
+  },
+  "ad7d6a25cc7d64c5abc8d42bcbeb3ca18dc6bb5d99742da30cd188420a7327a2": {
+    "describe": {
+      "columns": [
+        {
+          "name": "game_round",
+          "ordinal": 0,
+          "type_info": "Int4"
+        },
+        {
+          "name": "game_id",
+          "ordinal": 1,
+          "type_info": "Int4"
+        },
+        {
+          "name": "san_plus",
+          "ordinal": 2,
+          "type_info": "Text"
+        },
+        {
+          "name": "board_hash",
+          "ordinal": 3,
+          "type_info": "Int8"
+        },
+        {
+          "name": "white",
+          "ordinal": 4,
+          "type_info": "Text"
+        },
+        {
+          "name": "black",
+          "ordinal": 5,
+          "type_info": "Text"
+        },
+        {
+          "name": "event",
+          "ordinal": 6,
+          "type_info": "Text"
+        },
+        {
+          "name": "datetime",
+          "ordinal": 7,
+          "type_info": "Timestamp"
+        },
+        {
+          "name": "white_elo",
+          "ordinal": 8,
+          "type_info": "Int4"
+        },
+        {
+          "name": "black_elo",
+          "ordinal": 9,
+          "type_info": "Int4"
+        }
+      ],
+      "nullable": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        true
+      ],
+      "parameters": {
+        "Left": [
+          "Int8"
+        ]
+      }
+    },
+    "query": "SELECT game_round, game_id, san_plus, board_hash, white, black, event, datetime, white_elo, black_elo FROM (Move INNER JOIN Game ON game_id = id) WHERE board_hash = ($1)"
+  }
+}

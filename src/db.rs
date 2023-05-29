@@ -4,7 +4,7 @@ use shakmaty::{Chess, Position, zobrist::{ZobristHash, Zobrist64}};
 use pgn_reader::{RawHeader, SanPlus, Visitor, BufferedReader};
 use sqlx::{types::chrono::{NaiveDate, NaiveTime, NaiveDateTime}, PgPool};
 use sqlx::Error as DbErr;
-use kdam::{BarExt, Column};
+use kdam::BarExt;
 
 
 #[derive(Debug, Clone)]
