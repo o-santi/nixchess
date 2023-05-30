@@ -18,7 +18,13 @@ with nixpkgs;
 
 {
   schematic = scm.shell.overrideAttrs(new: old: {
-    buildInputs = old.buildInputs ++ [openssl.dev rust-bin.stable."1.69.0".minimal nix];
+    buildInputs = [
+      openssl.dev
+      rust-bin.stable."1.69.0".minimal
+      nix
+      zstd
+      wget
+    ] ++ old.buildInputs;
     nativeBuildInputs = old.buildInputs ++ [pkg-config];
   });
 }
